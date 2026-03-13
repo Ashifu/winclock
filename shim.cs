@@ -3,22 +3,31 @@ using System.Diagnostics;
 using System.IO;
 using System.Linq;
 
+/**
+ * Native Windows shim for Winclock.
+ */
 class winclock {
     static void Main(string[] args) {
-        string exePath = AppDomain.CurrentDomain.BaseDirectory;
-        string jarPath = Path.Combine(exePath, "win-clock-1.0.jar");
+        string baseDir = AppDomain.CurrentDomain.BaseDirectory;
+        string jarPath = Path.Combine(baseDir, "win-clock-1.0.jar");
 
         if (!File.Exists(jarPath)) {
-            Console.WriteLine("Error: win-clock-1.0.jar not found in " + exePath);
+            Console.WriteLine($"Error: win-clock-1.0.jar not found in {baseDir}");
             return;
         }
 
-        // Build arguments to pass to Java
-        string jarArgs = string.Join(" ", args.Select(a => (a.Contains(" ") ? "\"" + a + "\"" : a)));
+        // Sanitize and wrap arguments for the Java process
+        string cleanArgs = string.Join(" ", args.Select(arg => arg.Contains(" ") ? $"\"{arg}\"" : arg));
         
+        // JVM Optimization Flags:
+        // -Xmx16M: Limit max heap
+        // -XX:+UseSerialGC: Use the leanest garbage collector
+        // -XX:TieredStopAtLevel=1: Reduce JIT overhead for this simple CLI app
+        string jvmFlags = "-Xmx16M -XX:+UseSerialGC -XX:TieredStopAtLevel=1";
+
         ProcessStartInfo startInfo = new ProcessStartInfo {
             FileName = "java",
-            Arguments = "-Xmx16M -XX:+UseSerialGC -XX:TieredStopAtLevel=1 -jar \"" + jarPath + "\" " + jarArgs,
+            Arguments = $"{jvmFlags} -jar \"{jarPath}\" {cleanArgs}",
             UseShellExecute = false,
             CreateNoWindow = false,
             RedirectStandardOutput = false,
@@ -27,10 +36,10 @@ class winclock {
 
         try {
             using (Process process = Process.Start(startInfo)) {
-                process.WaitForExit();
+                process?.WaitForExit();
             }
         } catch (Exception ex) {
-            Console.WriteLine("Error starting win-clock: " + ex.Message);
+            Console.WriteLine($"Critical failure starting Winclock: {ex.Message}");
         }
     }
 }

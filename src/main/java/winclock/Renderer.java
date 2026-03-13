@@ -7,7 +7,7 @@ import java.time.format.DateTimeFormatter;
 public class Renderer {
     private static final String[][] DIGITS = {
             { "██████", "██  ██", "██  ██", "██  ██", "██████" }, // 0
-            { "    ██", "    ██", "    ██", "    ██", "    ██" }, // 1 (Right-aligned within 6-wide box)
+            { "    ██", "    ██", "    ██", "    ██", "    ██" }, // 1
             { "██████", "    ██", "██████", "██    ", "██████" }, // 2
             { "██████", "    ██", "██████", "    ██", "██████" }, // 3
             { "██  ██", "██  ██", "██████", "    ██", "    ██" }, // 4
@@ -46,114 +46,140 @@ public class Renderer {
         writer.flush();
     }
 
-    public void render(PrintWriter writer, Config config, LocalTime now, String dateStr, int terminalWidth, int terminalHeight) {
-        boolean showColon = !config.isBlinkColon() || now.getSecond() % 2 == 0;
-        String timePattern = config.isUse12hFormat() ? "hh:mm" : "HH:mm";
-        if (config.isShowSeconds()) {
-            timePattern += ":ss";
-        }
-        
-        DateTimeFormatter timeFormatter = DateTimeFormatter.ofPattern(timePattern);
-        String timeStr = now.format(timeFormatter);
-
-        int clockWidth = calculateWidth(timeStr);
+    public void render(PrintWriter writer, Config config, LocalTime now, String dateStr, int termWidth,
+            int termHeight) {
+        String timeStr = formatTime(now, config);
+        int clockWidth = calculateClockWidth(timeStr);
         String quoteText = config.getQuoteText();
+
+        // Horizontal Layout
         int contentWidth = Math.max(clockWidth, dateStr.length());
         if (config.isShowQuote()) {
             contentWidth = Math.max(contentWidth, quoteText.length());
         }
 
         int boxWidth = contentWidth + (config.isShowBorder() ? 4 : 0);
-        int clockHeight = 5 + 1 + 1 + (config.isShowQuote() ? 2 : 0); 
-        if (config.isShowBorder()) {
-            clockHeight += 2;
-        }
+        int startCol = Math.max(0, (termWidth - boxWidth) / 2);
 
-        int startRow = Math.max(0, (terminalHeight - clockHeight) / 2);
-        int startCol = Math.max(0, (terminalWidth - boxWidth) / 2);
+        // Vertical Layout
+        int clockHeight = 5 + 2; // Time row + gap + date row
+        if (config.isShowQuote())
+            clockHeight += 2;
+        if (config.isShowBorder())
+            clockHeight += 2;
+
+        int startRow = Math.max(0, (termHeight - clockHeight) / 2);
 
         StringBuilder frame = new StringBuilder();
-        frame.append("\033[H"); // Home
+        frame.append("\033[H"); // Cursor home
         frame.append(config.getAnsiColor());
 
-        // We'll build the entire relevant area. To avoid scrolling, we stop at the last row of the clock.
-        // For lines above the clock:
+        // Top Padding
         for (int i = 0; i < startRow; i++) {
-            frame.append(" ".repeat(terminalWidth)).append("\n");
+            frame.append(" ".repeat(termWidth)).append("\n");
         }
 
-        // Top Border
         if (config.isShowBorder()) {
-            String line = " ".repeat(startCol) + "┌" + "─".repeat(boxWidth - 2) + "┐";
-            frame.append(line).append(" ".repeat(Math.max(0, terminalWidth - line.length()))).append("\n");
+            appendTitledLine(frame, "┌", "┐", "─", boxWidth, startCol, termWidth);
         }
 
-        // Clock Rows
+        // ASCII Clock Digits
+        boolean showColon = !config.isBlinkColon() || now.getSecond() % 2 == 0;
         int clockPadding = (contentWidth - clockWidth) / 2;
+
         for (int row = 0; row < 5; row++) {
-            StringBuilder lineSb = new StringBuilder(" ".repeat(startCol));
-            if (config.isShowBorder()) lineSb.append("│ ");
-            lineSb.append(" ".repeat(clockPadding));
+            StringBuilder line = new StringBuilder(" ".repeat(startCol));
+            if (config.isShowBorder())
+                line.append("│ ");
+            line.append(" ".repeat(clockPadding));
+
             for (char c : timeStr.toCharArray()) {
                 if (c == ':') {
-                    lineSb.append(showColon ? COLON[row] : EMPTY_COLON[row]).append("  ");
+                    line.append(showColon ? COLON[row] : EMPTY_COLON[row]).append("  ");
                 } else if (Character.isDigit(c)) {
-                    lineSb.append(DIGITS[c - '0'][row]).append("  ");
-                } else {
-                    lineSb.append("      ").append("  "); 
+                    line.append(DIGITS[c - '0'][row]).append("  ");
                 }
             }
-            lineSb.append(" ".repeat(contentWidth - clockWidth - clockPadding));
-            if (config.isShowBorder()) lineSb.append(" │");
-            
-            String line = lineSb.toString();
-            frame.append(line).append(" ".repeat(Math.max(0, terminalWidth - line.length()))).append("\n");
+
+            line.append(" ".repeat(contentWidth - clockWidth - clockPadding));
+            if (config.isShowBorder())
+                line.append(" │");
+
+            finalizeLine(frame, line.toString(), termWidth);
         }
 
         // Gap
-        String gapLine = " ".repeat(startCol) + (config.isShowBorder() ? "│ " + " ".repeat(contentWidth) + " │" : "");
-        frame.append(gapLine).append(" ".repeat(Math.max(0, terminalWidth - gapLine.length()))).append("\n");
+        appendEmptyLine(frame, config.isShowBorder(), contentWidth, startCol, termWidth);
 
         // Date Row
-        int datePadding = (contentWidth - dateStr.length()) / 2;
-        String dateText = " ".repeat(datePadding) + dateStr + " ".repeat(contentWidth - dateStr.length() - datePadding);
-        String dateLine = " ".repeat(startCol) + (config.isShowBorder() ? "│ " : "") + dateText + (config.isShowBorder() ? " │" : "");
-        frame.append(dateLine).append(" ".repeat(Math.max(0, terminalWidth - dateLine.length()))).append("\n");
+        appendCenteredLine(frame, dateStr, config.isShowBorder(), contentWidth, startCol, termWidth);
 
         // Quote Row
         if (config.isShowQuote()) {
-            String quoteGap = " ".repeat(startCol) + (config.isShowBorder() ? "│ " + " ".repeat(contentWidth) + " │" : "");
-            frame.append(quoteGap).append(" ".repeat(Math.max(0, terminalWidth - quoteGap.length()))).append("\n");
-            
-            int quotePadding = (contentWidth - quoteText.length()) / 2;
-            String quoteTextPadded = " ".repeat(quotePadding) + quoteText + " ".repeat(contentWidth - quoteText.length() - quotePadding);
-            // Note: We handle italics with escape codes inside the line, but they don't count for length
-            String quoteLine = " ".repeat(startCol) + (config.isShowBorder() ? "│ " : "") + "\033[3m" + quoteTextPadded + "\033[23m" + (config.isShowBorder() ? " │" : "");
-            // Length calculation for padding needs to be careful with escape codes
-            int visibleLen = startCol + (config.isShowBorder() ? 2 : 0) + quoteTextPadded.length() + (config.isShowBorder() ? 2 : 0);
-            frame.append(quoteLine).append(" ".repeat(Math.max(0, terminalWidth - visibleLen))).append("\n");
+            appendEmptyLine(frame, config.isShowBorder(), contentWidth, startCol, termWidth);
+            String styledQuote = "\033[3m" + quoteText + "\033[23m";
+            appendCenteredLine(frame, styledQuote, config.isShowBorder(), contentWidth, startCol, termWidth,
+                    quoteText.length());
         }
 
-        // Bottom Border
         if (config.isShowBorder()) {
-            String line = " ".repeat(startCol) + "└" + "─".repeat(boxWidth - 2) + "┘";
-            frame.append(line).append(" ".repeat(Math.max(0, terminalWidth - line.length()))).append("\n");
+            appendTitledLine(frame, "└", "┘", "─", boxWidth, startCol, termWidth);
         }
-        
-        writer.print(frame.toString());
+
+        writer.print(frame);
         writer.flush();
     }
 
-    private int calculateWidth(String timeStr) {
+    private String formatTime(LocalTime now, Config config) {
+        String pattern = config.isUse12hFormat() ? "hh:mm" : "HH:mm";
+        if (config.isShowSeconds())
+            pattern += ":ss";
+        return now.format(DateTimeFormatter.ofPattern(pattern));
+    }
+
+    private void appendCenteredLine(StringBuilder sb, String text, boolean border, int contentWidth, int startCol,
+            int termWidth) {
+        appendCenteredLine(sb, text, border, contentWidth, startCol, termWidth, text.length());
+    }
+
+    private void appendCenteredLine(StringBuilder sb, String text, boolean border, int contentWidth, int startCol,
+            int termWidth, int visibleLen) {
+        int padding = (contentWidth - visibleLen) / 2;
+        StringBuilder line = new StringBuilder(" ".repeat(startCol));
+
+        if (border)
+            line.append("│ ");
+        line.append(" ".repeat(padding)).append(text).append(" ".repeat(contentWidth - visibleLen - padding));
+        if (border)
+            line.append(" │");
+
+        int totalVisible = startCol + (border ? 4 : 0) + contentWidth;
+        finalizeLine(sb, line.toString(), termWidth, totalVisible);
+    }
+
+    private void appendEmptyLine(StringBuilder sb, boolean border, int contentWidth, int startCol, int termWidth) {
+        String content = border ? "│ " + " ".repeat(contentWidth) + " │" : "";
+        finalizeLine(sb, " ".repeat(startCol) + content, termWidth);
+    }
+
+    private void appendTitledLine(StringBuilder sb, String open, String close, String fill, int width, int startCol,
+            int termWidth) {
+        String line = " ".repeat(startCol) + open + fill.repeat(width - 2) + close;
+        finalizeLine(sb, line, termWidth);
+    }
+
+    private void finalizeLine(StringBuilder sb, String line, int termWidth) {
+        finalizeLine(sb, line, termWidth, line.length());
+    }
+
+    private void finalizeLine(StringBuilder sb, String line, int termWidth, int visibleLen) {
+        sb.append(line).append(" ".repeat(Math.max(0, termWidth - visibleLen))).append("\n");
+    }
+
+    private int calculateClockWidth(String timeStr) {
         int width = 0;
         for (char c : timeStr.toCharArray()) {
-            if (c == ':') {
-                width += COLON[0].length() + 2;
-            } else if (Character.isDigit(c)) {
-                width += 6 + 2; 
-            } else {
-                width += 6 + 2; 
-            }
+            width += (c == ':' ? 2 : 6) + 2; // Char width + space
         }
         return width;
     }
